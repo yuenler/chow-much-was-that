@@ -680,7 +680,7 @@ function TransactionRow({ txn, categoryOptions, contextOptions, onPatch }) {
         }}
         aria-label="Note"
       />
-      <b className={txn.amount < 0 ? "income" : ""}>{currency(Math.abs(txn.amount))}</b>
+      <b className={txn.amount < 0 ? "income" : ""}>{currency(txn.amount)}</b>
     </div>
   );
 }
