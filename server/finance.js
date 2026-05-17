@@ -1,4 +1,16 @@
-import { addMonths, endOfMonth, endOfYear, format, parseISO, startOfMonth, startOfYear, subMonths } from "date-fns";
+import {
+  addMonths,
+  eachWeekOfInterval,
+  endOfMonth,
+  endOfWeek,
+  endOfYear,
+  format,
+  max as maxDate,
+  min as minDate,
+  parseISO,
+  startOfMonth,
+  startOfYear
+} from "date-fns";
 
 export const VENMO_ZELLE_PATTERN = /\b(venmo|zelle|paypal instant transfer|cash app)\b/i;
 
@@ -334,6 +346,10 @@ export function summarizeFinance(state, range = currentMonthKey()) {
   };
 }
 
+function incomeStatementPayDate(statement) {
+  return statement.payDate || statement.periodEnd || statement.periodStart || "";
+}
+
 function summarizeIncomeStatements(statements) {
   const totals = statements.reduce((sum, statement) => ({
     grossPay: sum.grossPay + Number(statement.grossPay || 0),
@@ -387,22 +403,78 @@ function normalizeRange(range) {
   return { mode: "month", month, year: month.slice(0, 4), start: bounds.start, end: bounds.end, label: format(parseISO(`${month}-01`), "MMMM yyyy") };
 }
 
-function trendForRange(state, period) {
-  const months = period.mode === "year"
-    ? Array.from({ length: 12 }, (_, index) => `${period.year}-${String(index + 1).padStart(2, "0")}`)
-    : period.mode === "custom"
-      ? monthsBetween(period.start, period.end)
-    : Array.from({ length: 6 }, (_, index) => {
-        const target = subMonths(parseISO(`${period.month}-01`), 5 - index);
-        return format(target, "yyyy-MM");
-      });
+function trendBuckets(period) {
+  if (period.mode === "year") {
+    return Array.from({ length: 12 }, (_, index) => {
+      const key = `${period.year}-${String(index + 1).padStart(2, "0")}`;
+      const bounds = monthBounds(key);
+      return {
+        key,
+        start: bounds.start,
+        end: bounds.end,
+        label: format(parseISO(`${key}-01`), "MMM")
+      };
+    });
+  }
 
-  return months.map((key) => {
-    const bounds = monthBounds(key);
-    const txns = state.transactions.filter((txn) => !txn.hidden && txn.date >= bounds.start && txn.date <= bounds.end);
+  if (period.mode === "custom") {
+    return monthsBetween(period.start, period.end).map((key) => {
+      const bounds = monthBounds(key);
+      return {
+        key,
+        start: bounds.start,
+        end: bounds.end,
+        label: format(parseISO(`${key}-01`), "MMM")
+      };
+    });
+  }
+
+  if (period.mode === "day") {
+    return [{
+      key: period.day,
+      start: period.start,
+      end: period.end,
+      label: format(parseISO(period.day), "MMM d, yyyy")
+    }];
+  }
+
+  return weeksInMonth(period.month);
+}
+
+function weeksInMonth(monthKey) {
+  const bounds = monthBounds(monthKey);
+  const monthStart = parseISO(bounds.start);
+  const monthEnd = parseISO(bounds.end);
+
+  return eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 0 }).map((weekStart) => {
+    const rangeStart = maxDate([weekStart, monthStart]);
+    const rangeEnd = minDate([endOfWeek(weekStart, { weekStartsOn: 0 }), monthEnd]);
+    const start = format(rangeStart, "yyyy-MM-dd");
+    const end = format(rangeEnd, "yyyy-MM-dd");
+    const sameDay = start === end;
+    return {
+      key: start,
+      start,
+      end,
+      label: sameDay ? format(rangeStart, "MMM d") : `${format(rangeStart, "MMM d")}–${format(rangeEnd, "d")}`
+    };
+  });
+}
+
+function trendForRange(state, period) {
+  const statements = state.incomeStatements || [];
+
+  return trendBuckets(period).map((bucket) => {
+    const txns = state.transactions.filter(
+      (txn) => !txn.hidden && txn.date >= bucket.start && txn.date <= bucket.end
+    );
     const spend = round(txns.filter((txn) => txn.amount > 0).reduce((sum, txn) => sum + txn.amount, 0));
-    const income = round(Math.abs(txns.filter((txn) => txn.amount < 0).reduce((sum, txn) => sum + txn.amount, 0)));
-    return { month: format(parseISO(`${key}-01`), "MMM"), key, spend, income };
+    const bucketStatements = statements.filter((statement) => {
+      const date = incomeStatementPayDate(statement);
+      return date && date >= bucket.start && date <= bucket.end;
+    });
+    const income = round(bucketStatements.reduce((sum, statement) => sum + Number(statement.takeHome || 0), 0));
+    return { label: bucket.label, key: bucket.key, spend, income };
   });
 }
 

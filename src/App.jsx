@@ -432,6 +432,9 @@ function Overview({ state }) {
   const payroll = summary.incomeBreakdown || {};
   const cashflowBase = payroll.takeHome > 0 ? payroll.takeHome : summary.totalIncome;
   const netAfterSpend = cashflowBase - summary.totalSpend;
+  const trend = summary.monthlyTrend || [];
+  const trendSpan = trend.length > 1 ? `${trend[0].label} – ${trend.at(-1).label}` : trend[0]?.label;
+  const flowDetail = [payroll.count ? "Take-home pay vs spending" : "Income vs spending", trendSpan].filter(Boolean).join(" · ");
 
   return (
     <div className="page-grid">
@@ -443,7 +446,7 @@ function Overview({ state }) {
       </section>
 
       <section className="wide-panel">
-        <PanelTitle icon={<Landmark size={18} />} title={summary.period?.mode === "year" ? "Year flow" : "Six-month flow"} detail="Income versus spending" />
+        <PanelTitle icon={<Landmark size={18} />} title="Cashflow trend" detail={flowDetail} />
         <div className="chart-frame">
           <ResponsiveContainer width="100%" height={260}>
             <AreaChart data={summary.monthlyTrend}>
@@ -458,7 +461,7 @@ function Overview({ state }) {
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="#e5e7eb" vertical={false} />
-              <XAxis dataKey="month" tickLine={false} axisLine={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} />
               <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => currency(value, true)} />
               <Tooltip formatter={(value, name) => [currency(value), displayLabel(name)]} />
               <Area dataKey="income" stroke="#0f9f9a" fill="url(#income)" strokeWidth={3} />
