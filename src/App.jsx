@@ -1321,8 +1321,21 @@ function makePieData(transactions, summary, mode) {
   return rows;
 }
 
+function pruneSankey(nodes, links) {
+  const activeLinks = links.filter((link) => link.value > 0);
+  const usedIds = new Set();
+  for (const link of activeLinks) {
+    usedIds.add(link.source);
+    usedIds.add(link.target);
+  }
+  return {
+    nodes: nodes.filter((node) => usedIds.has(node.id)),
+    links: activeLinks
+  };
+}
+
 function makeSankeyData(transactions, summary, mode) {
-  const breakdown = spendingBreakdown(transactions, summary, mode);
+  const breakdown = spendingBreakdown(transactions, summary, mode).filter((row) => row.value > 0);
   const visible = breakdown.slice(0, 10);
   const other = breakdown.slice(10).reduce((sum, row) => sum + row.value, 0);
   if (other > 0) visible.push({ name: "Other", value: Math.round(other * 100) / 100 });
@@ -1330,35 +1343,52 @@ function makeSankeyData(transactions, summary, mode) {
   const income = summary.incomeBreakdown || {};
   if (income.grossPay > 0) {
     const takeHome = income.takeHome || Math.max(income.grossPay - (income.taxes || 0) - (income.retirement401k || 0) - (income.benefits || 0), 0);
-    const nodes = [
-      { id: "node:gross-pay", label: "Gross pay" },
-      { id: "node:taxes", label: "Taxes" },
-      { id: "node:investments", label: "Investments" },
-      { id: "node:benefits", label: "Benefits" },
-      { id: "node:take-home", label: "Take-home" },
-      ...visible.map((row, index) => ({ id: `spend:${index}:${canonicalLabel(row.name)}`, label: row.name }))
-    ];
-    const links = [
-      { source: "node:gross-pay", target: "node:taxes", value: income.taxes || 0 },
-      { source: "node:gross-pay", target: "node:investments", value: income.retirement401k || 0 },
-      { source: "node:gross-pay", target: "node:benefits", value: income.benefits || 0 },
-      { source: "node:gross-pay", target: "node:take-home", value: takeHome }
-    ].filter((link) => link.value > 0);
+    const nodes = [{ id: "node:gross-pay", label: "Gross pay" }];
+    const links = [];
+
+    if ((income.taxes || 0) > 0) {
+      nodes.push({ id: "node:taxes", label: "Taxes" });
+      links.push({ source: "node:gross-pay", target: "node:taxes", value: income.taxes });
+    }
+    if ((income.retirement401k || 0) > 0) {
+      nodes.push({ id: "node:investments", label: "Investments" });
+      links.push({ source: "node:gross-pay", target: "node:investments", value: income.retirement401k });
+    }
+    if ((income.benefits || 0) > 0) {
+      nodes.push({ id: "node:benefits", label: "Benefits" });
+      links.push({ source: "node:gross-pay", target: "node:benefits", value: income.benefits });
+    }
+    let spendSource = "node:gross-pay";
+    if (takeHome > 0) {
+      nodes.push({ id: "node:take-home", label: "Take-home" });
+      links.push({ source: "node:gross-pay", target: "node:take-home", value: takeHome });
+      spendSource = "node:take-home";
+    }
+
     visible.forEach((row, index) => {
-      links.push({ source: "node:take-home", target: `spend:${index}:${canonicalLabel(row.name)}`, value: row.value });
+      const id = `spend:${index}:${canonicalLabel(row.name)}`;
+      nodes.push({ id, label: row.name });
+      links.push({ source: spendSource, target: id, value: row.value });
     });
+
     const leftover = Math.round(Math.max(takeHome - (summary.totalSpend || 0), 0) * 100) / 100;
     if (leftover > 0) {
       nodes.push({ id: "spend:left-over", label: "Left over" });
-      links.push({ source: "node:take-home", target: "spend:left-over", value: leftover });
+      links.push({ source: spendSource, target: "spend:left-over", value: leftover });
     }
-    return { nodes, links };
+
+    return pruneSankey(nodes, links);
   }
 
-  const nodes = [{ id: "node:spending", label: "Spending" }, ...visible.map((row, index) => ({ id: `spend:${index}:${canonicalLabel(row.name)}`, label: row.name }))];
-  const links = visible.map((row, index) => ({ source: nodes[0].id, target: nodes[index + 1].id, value: row.value }));
+  const nodes = [{ id: "node:spending", label: "Spending" }];
+  const links = [];
+  visible.forEach((row, index) => {
+    const id = `spend:${index}:${canonicalLabel(row.name)}`;
+    nodes.push({ id, label: row.name });
+    links.push({ source: "node:spending", target: id, value: row.value });
+  });
 
-  return { nodes, links };
+  return pruneSankey(nodes, links);
 }
 
 function spendingBreakdown(transactions, summary, mode) {
