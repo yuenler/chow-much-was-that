@@ -22,9 +22,12 @@ export function setOpenAIModel(model) {
 export async function analyzeIncomeStatementPdf(buffer, fileName) {
   const parser = new PDFParse({ data: buffer });
   let text = "";
+  let firstPageImageUrl = "";
   try {
     const result = await parser.getText();
     text = result.text || "";
+    const screenshot = await parser.getScreenshot({ first: 1, desiredWidth: 3200, imageDataUrl: true, imageBuffer: false });
+    firstPageImageUrl = screenshot.pages?.[0]?.dataUrl || "";
   } finally {
     await parser.destroy();
   }
@@ -36,12 +39,23 @@ export async function analyzeIncomeStatementPdf(buffer, fileName) {
       "Extract payroll income statement amounts for a personal finance app.",
       "Return only JSON.",
       "Use positive numbers in dollars.",
-      "Taxes should include federal, state, local, Social Security, and Medicare withholding.",
-      "retirement401k should include employee 401k/retirement contributions only.",
-      "Benefits should include medical, dental, vision, HSA/FSA, insurance, and similar benefit deductions.",
-      "Take-home is net pay / direct deposit / amount paid to employee."
+      "Read the first-page image as the source of truth. Use the extracted text only as a backup hint.",
+      "Use the current pay-period amount column, not year-to-date totals, unless the document only has YTD.",
+      "Do not calculate totals. Only copy the individual line amounts into the requested fields.",
+      "For the statutory fields, copy only these payroll tax/insurance lines when present: Federal Income Tax, Social Security Tax, Medicare Tax, WA Paid Family Leave Ins, WA Paid Medical Leave Ins, and WA LTCare.",
+      "For other fields, copy only these lines when present: Comm Addl Inc, Critic Illness, Hsa, Pre-Tax Dental, Pre-Tax Medical, Pre-Tax Vision, and 401K-Roth.",
+      "If a field is absent, return 0 rather than guessing.",
+      "Use the sign shown in the document if clear, but do not sum anything."
     ].join(" "),
-    input: JSON.stringify({ fileName, text: text.slice(0, 50000) }),
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: JSON.stringify({ fileName, extractedText: text.slice(0, 30000) }) },
+          ...(firstPageImageUrl ? [{ type: "input_image", image_url: firstPageImageUrl, detail: "high" }] : [])
+        ]
+      }
+    ],
     text: {
       format: {
         type: "json_schema",
@@ -49,18 +63,41 @@ export async function analyzeIncomeStatementPdf(buffer, fileName) {
         schema: {
           type: "object",
           additionalProperties: false,
-          required: ["employer", "payDate", "periodStart", "periodEnd", "grossPay", "taxes", "retirement401k", "benefits", "otherDeductions", "takeHome", "aiSummary"],
+          required: ["employer", "payDate", "periodStart", "periodEnd", "grossPay", "takeHome", "statutory", "other", "aiSummary"],
           properties: {
             employer: { type: "string" },
             payDate: { type: ["string", "null"], description: "YYYY-MM-DD if available" },
             periodStart: { type: ["string", "null"], description: "YYYY-MM-DD if available" },
             periodEnd: { type: ["string", "null"], description: "YYYY-MM-DD if available" },
             grossPay: { type: "number" },
-            taxes: { type: "number" },
-            retirement401k: { type: "number" },
-            benefits: { type: "number" },
-            otherDeductions: { type: "number" },
             takeHome: { type: "number" },
+            statutory: {
+              type: "object",
+              additionalProperties: false,
+              required: ["federalIncomeTax", "socialSecurityTax", "medicareTax", "waPaidFamilyLeaveIns", "waPaidMedicalLeaveIns", "waLTCare"],
+              properties: {
+                federalIncomeTax: { type: "number" },
+                socialSecurityTax: { type: "number" },
+                medicareTax: { type: "number" },
+                waPaidFamilyLeaveIns: { type: "number" },
+                waPaidMedicalLeaveIns: { type: "number" },
+                waLTCare: { type: "number" }
+              }
+            },
+            other: {
+              type: "object",
+              additionalProperties: false,
+              required: ["commAddlInc", "criticalIllness", "hsa", "preTaxDental", "preTaxMedical", "preTaxVision", "roth401k"],
+              properties: {
+                commAddlInc: { type: "number" },
+                criticalIllness: { type: "number" },
+                hsa: { type: "number" },
+                preTaxDental: { type: "number" },
+                preTaxMedical: { type: "number" },
+                preTaxVision: { type: "number" },
+                roth401k: { type: "number" }
+              }
+            },
             aiSummary: { type: "string" }
           }
         }
@@ -419,17 +456,38 @@ function fallbackCommand(text, state) {
 }
 
 function normalizeIncomeStatementAnalysis(parsed, fileName) {
+  const statutory = normalizeLineItems(parsed.statutory, {
+    federalIncomeTax: 0,
+    socialSecurityTax: 0,
+    medicareTax: 0,
+    waPaidFamilyLeaveIns: 0,
+    waPaidMedicalLeaveIns: 0,
+    waLTCare: 0
+  });
+  const other = normalizeLineItems(parsed.other, {
+    commAddlInc: 0,
+    criticalIllness: 0,
+    hsa: 0,
+    preTaxDental: 0,
+    preTaxMedical: 0,
+    preTaxVision: 0,
+    roth401k: 0
+  });
+  const benefits = sumLineItems(other, ["commAddlInc", "criticalIllness", "hsa", "preTaxDental", "preTaxMedical", "preTaxVision"]);
+  const retirement401k = money(other.roth401k);
+  const taxes = sumLineItems(statutory, Object.keys(statutory));
+
   return {
     employer: String(parsed.employer || ""),
     payDate: validDate(parsed.payDate) ? parsed.payDate : "",
     periodStart: validDate(parsed.periodStart) ? parsed.periodStart : "",
     periodEnd: validDate(parsed.periodEnd) ? parsed.periodEnd : "",
     grossPay: money(parsed.grossPay),
-    taxes: money(parsed.taxes),
-    retirement401k: money(parsed.retirement401k),
-    benefits: money(parsed.benefits),
-    otherDeductions: money(parsed.otherDeductions),
+    taxes,
+    retirement401k,
+    benefits,
     takeHome: money(parsed.takeHome),
+    payrollLines: { statutory, other },
     aiSummary: String(parsed.aiSummary || `Parsed ${fileName}`)
   };
 }
@@ -437,9 +495,26 @@ function normalizeIncomeStatementAnalysis(parsed, fileName) {
 function fallbackIncomeStatement(text, fileName) {
   const grossPay = amountAfter(text, /gross\s+(?:pay|earnings|income)/i);
   const takeHome = amountAfter(text, /(?:net\s+pay|take\s*home|direct\s+deposit|amount\s+paid)/i);
-  const taxes = sumAmountsNear(text, /(federal|state|local|social security|medicare|fica|withholding)/i);
-  const retirement401k = sumAmountsNear(text, /(401k|401\(k\)|retirement)/i);
-  const benefits = sumAmountsNear(text, /(medical|dental|vision|health|hsa|fsa|insurance|benefit)/i);
+  const statutory = {
+    federalIncomeTax: lineAmount(text, /federal\s+income\s+tax/i),
+    socialSecurityTax: lineAmount(text, /social\s+security\s+tax/i),
+    medicareTax: lineAmount(text, /medicare\s+tax/i),
+    waPaidFamilyLeaveIns: lineAmount(text, /wa\s+paid\s+family\s+leave\s+ins/i),
+    waPaidMedicalLeaveIns: lineAmount(text, /wa\s+paid\s+medical\s+leave\s+ins/i),
+    waLTCare: lineAmount(text, /wa\s+ltcare/i)
+  };
+  const other = {
+    commAddlInc: lineAmount(text, /comm\s+addl\s+inc/i),
+    criticalIllness: lineAmount(text, /critic(?:al)?\s+illness/i),
+    hsa: lineAmount(text, /\bhsa\b/i),
+    preTaxDental: lineAmount(text, /pre-tax\s+dental/i),
+    preTaxMedical: lineAmount(text, /pre-tax\s+medical/i),
+    preTaxVision: lineAmount(text, /pre-tax\s+vision/i),
+    roth401k: lineAmount(text, /401k-roth|401\(k\).*roth|roth.*401/i)
+  };
+  const taxes = sumLineItems(statutory, Object.keys(statutory));
+  const retirement401k = money(other.roth401k);
+  const benefits = sumLineItems(other, ["commAddlInc", "criticalIllness", "hsa", "preTaxDental", "preTaxMedical", "preTaxVision"]);
   const dates = text.match(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b/g) || [];
   const normalizedDates = dates.map(normalizeDate).filter(Boolean);
 
@@ -452,8 +527,8 @@ function fallbackIncomeStatement(text, fileName) {
     taxes,
     retirement401k,
     benefits,
-    otherDeductions: 0,
     takeHome,
+    payrollLines: { statutory, other },
     aiSummary: `Local fallback parsed ${fileName}; add OPENAI_API_KEY for better payroll extraction.`
   };
 }
@@ -471,8 +546,24 @@ function sumAmountsNear(text, pattern) {
     .reduce((sum, value) => sum + money(value), 0);
 }
 
+function lineAmount(text, pattern) {
+  const line = text.split(/\n/).find((item) => pattern.test(item));
+  if (!line) return 0;
+  return money((line.match(/-?\$?\d[\d,]*\.\d{2}\*?/g) || []).at(-1));
+}
+
+function normalizeLineItems(source = {}, defaults) {
+  return Object.fromEntries(
+    Object.keys(defaults).map((key) => [key, money(source?.[key])])
+  );
+}
+
+function sumLineItems(source, keys) {
+  return Math.round(keys.reduce((sum, key) => sum + money(source[key]), 0) * 100) / 100;
+}
+
 function money(value) {
-  const number = Number(String(value || 0).replace(/[$,]/g, ""));
+  const number = Number(String(value || 0).replace(/[$,*]/g, ""));
   return Number.isFinite(number) ? Math.round(Math.abs(number) * 100) / 100 : 0;
 }
 

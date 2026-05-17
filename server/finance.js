@@ -340,9 +340,8 @@ function summarizeIncomeStatements(statements) {
     taxes: sum.taxes + Number(statement.taxes || 0),
     retirement401k: sum.retirement401k + Number(statement.retirement401k || 0),
     benefits: sum.benefits + Number(statement.benefits || 0),
-    otherDeductions: sum.otherDeductions + Number(statement.otherDeductions || 0),
     takeHome: sum.takeHome + Number(statement.takeHome || 0)
-  }), { grossPay: 0, taxes: 0, retirement401k: 0, benefits: 0, otherDeductions: 0, takeHome: 0 });
+  }), { grossPay: 0, taxes: 0, retirement401k: 0, benefits: 0, takeHome: 0 });
 
   return {
     ...Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, round(value)])),

@@ -97,6 +97,9 @@ function normalizeIncomeStatement(statement) {
     id: statement.id || randomUUID(),
     fileName: statement.fileName || "Income statement",
     uploadedAt: statement.uploadedAt || new Date().toISOString(),
+    source: statement.source || "manual",
+    sourceTransactionId: statement.sourceTransactionId || "",
+    incomeRuleId: statement.incomeRuleId || "",
     employer: statement.employer || "",
     payDate: statement.payDate || statement.periodEnd || "",
     periodStart: statement.periodStart || statement.payDate || "",
@@ -105,8 +108,8 @@ function normalizeIncomeStatement(statement) {
     taxes: Number(statement.taxes || 0),
     retirement401k: Number(statement.retirement401k || 0),
     benefits: Number(statement.benefits || 0),
-    otherDeductions: Number(statement.otherDeductions || 0),
     takeHome: Number(statement.takeHome || 0),
+    payrollLines: statement.payrollLines || { statutory: {}, other: {} },
     aiSummary: statement.aiSummary || ""
   };
 }

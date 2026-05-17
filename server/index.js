@@ -4,6 +4,7 @@ import cors from "cors";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 import { Configuration, PlaidApi, PlaidEnvironments } from "plaid";
@@ -305,11 +306,127 @@ app.post("/api/income-statements", upload.single("statement"), async (req, res) 
   }
 });
 
+app.post("/api/income-statements/manual", (req, res) => {
+  const payDate = validDate(req.body.payDate) ? req.body.payDate : "";
+  if (!payDate) return res.status(400).json({ error: "Pay date is required." });
+
+  const grossPay = roundMoney(req.body.grossPay);
+  const taxes = roundMoney(req.body.taxes);
+  const retirement401k = roundMoney(req.body.retirement401k);
+  const benefits = roundMoney(req.body.benefits);
+  const providedTakeHome = req.body.takeHome === "" || req.body.takeHome === null || req.body.takeHome === undefined
+    ? null
+    : roundMoney(req.body.takeHome);
+  const takeHome = providedTakeHome ?? roundMoney(Math.max(grossPay - taxes - retirement401k - benefits, 0));
+
+  const statement = {
+    id: crypto.randomUUID(),
+    fileName: "Manual income entry",
+    uploadedAt: new Date().toISOString(),
+    source: "manual-entry",
+    employer: cleanText(req.body.employer) || "Manual income",
+    payDate,
+    periodStart: validDate(req.body.periodStart) ? req.body.periodStart : payDate,
+    periodEnd: validDate(req.body.periodEnd) ? req.body.periodEnd : payDate,
+    grossPay,
+    taxes,
+    retirement401k,
+    benefits,
+    takeHome,
+    payrollLines: { statutory: {}, other: {} },
+    aiSummary: ""
+  };
+
+  const state = updateState((current) => ({
+    ...current,
+    incomeStatements: [statement, ...(current.incomeStatements || [])]
+  }));
+  const safeState = publicState();
+  res.json({ ok: true, statement, state: safeState, summary: summarizeFinance(safeState) });
+});
+
+app.patch("/api/income-statements/:id", (req, res) => {
+  const allowed = new Set(["employer", "payDate", "periodStart", "periodEnd", "grossPay", "taxes", "retirement401k", "benefits", "takeHome"]);
+  const patch = Object.fromEntries(
+    Object.entries(req.body || {}).filter(([key]) => allowed.has(key))
+  );
+  for (const field of ["grossPay", "taxes", "retirement401k", "benefits", "takeHome"]) {
+    if (patch[field] !== undefined) patch[field] = Math.round(Number(patch[field] || 0) * 100) / 100;
+  }
+  const state = updateState((current) => ({
+    ...current,
+    incomeStatements: (current.incomeStatements || []).map((statement) =>
+      statement.id === req.params.id ? { ...statement, ...patch } : statement
+    )
+  }));
+  const safeState = publicState();
+  res.json({ ok: true, state: safeState, summary: summarizeFinance(safeState) });
+});
+
 app.delete("/api/income-statements/:id", (req, res) => {
   const state = updateState((current) => ({
     ...current,
     incomeStatements: (current.incomeStatements || []).filter((statement) => statement.id !== req.params.id)
   }));
+  const safeState = publicState();
+  res.json({ ok: true, state: safeState, summary: summarizeFinance(safeState) });
+});
+
+app.post("/api/income-rules/generate", (req, res) => {
+  const match = cleanText(req.body.match || "HARVARD UNIVERSI PAYROLL");
+  const employer = cleanText(req.body.employer || "Harvard University");
+  const grossPay = roundMoney(req.body.grossPay ?? 449.96);
+  const minimumDeposit = roundMoney(req.body.minimumDeposit ?? 250);
+  const startDate = validDate(req.body.startDate) ? req.body.startDate : "2025-01-01";
+  const endDate = validDate(req.body.endDate) ? req.body.endDate : "9999-12-31";
+  const incomeRuleId = `income_rule_${hashText(`${match}|${grossPay}`)}`;
+
+  const state = updateState((current) => {
+    const existingSourceIds = new Set((current.incomeStatements || []).map((statement) => statement.sourceTransactionId).filter(Boolean));
+    const generated = current.transactions
+      .filter((txn) => {
+        const text = `${txn.displayName || ""} ${txn.merchantName || ""} ${txn.name || ""}`.toLowerCase();
+        const deposit = Math.abs(Number(txn.amount || 0));
+        return txn.amount < 0
+          && txn.date >= startDate
+          && txn.date <= endDate
+          && deposit >= minimumDeposit
+          && text.includes(match.toLowerCase())
+          && !existingSourceIds.has(txn.id);
+      })
+      .map((txn) => {
+        const takeHome = roundMoney(Math.abs(txn.amount));
+        const taxes = roundMoney(Math.max(grossPay - takeHome, 0));
+        return {
+          id: `income_${hashText(`${incomeRuleId}|${txn.id}`)}`,
+          fileName: "Generated from payroll deposit",
+          uploadedAt: new Date().toISOString(),
+          source: "income-rule",
+          sourceTransactionId: txn.id,
+          incomeRuleId,
+          employer,
+          payDate: txn.date,
+          periodStart: txn.date,
+          periodEnd: txn.date,
+          grossPay,
+          taxes,
+          retirement401k: 0,
+          benefits: 0,
+          takeHome,
+          payrollLines: {
+            statutory: { inferredTaxes: taxes },
+            other: {}
+          },
+          aiSummary: `Generated from matching payroll deposit. Taxes inferred as gross pay minus take-home.`
+        };
+      });
+
+    return {
+      ...current,
+      incomeStatements: [...generated, ...(current.incomeStatements || [])].sort((a, b) => String(b.payDate || "").localeCompare(String(a.payDate || "")))
+    };
+  });
+
   const safeState = publicState();
   res.json({ ok: true, state: safeState, summary: summarizeFinance(safeState) });
 });
@@ -1071,6 +1188,15 @@ function formatLabel(value) {
 
 function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function roundMoney(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : 0;
+}
+
+function hashText(value) {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 18);
 }
 
 const distDir = path.resolve(__dirname, "..", "dist");

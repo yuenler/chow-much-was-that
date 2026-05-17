@@ -184,6 +184,13 @@ export default function App() {
     }
   }
 
+  async function createManualIncomeStatement(statement) {
+    await runAction("income-manual", async () => {
+      await api("/api/income-statements/manual", { method: "POST", body: statement });
+      setToast("Income statement added.");
+    });
+  }
+
   async function changeModel(model) {
     setBusy("model");
     setToast("");
@@ -324,7 +331,6 @@ export default function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <div className="eyebrow">Local, private, read-only money dashboard</div>
             <h1>{activeTab}</h1>
           </div>
           <div className="topbar-actions">
@@ -353,8 +359,20 @@ export default function App() {
           <Income
             statements={state.incomeStatements || []}
             summary={summary}
-            busy={busy === "income-upload"}
+            busy={busy === "income-upload" || busy === "income-manual"}
             onUpload={uploadIncomeStatement}
+            onManual={createManualIncomeStatement}
+            onGenerateRule={() => runAction("income", () => api("/api/income-rules/generate", {
+              method: "POST",
+              body: {
+                match: "HARVARD UNIVERSI PAYROLL",
+                employer: "Harvard University",
+                grossPay: 449.96,
+                minimumDeposit: 250,
+                startDate: "2025-01-01"
+              }
+            }))}
+            onPatch={(id, patch) => runAction("income", () => api(`/api/income-statements/${id}`, { method: "PATCH", body: patch }))}
             onDelete={(id) => runAction("income", () => api(`/api/income-statements/${id}`, { method: "DELETE" }))}
           />
         )}
@@ -487,31 +505,36 @@ function Overview({ state }) {
           {sankeyData.links.length ? (
             <ResponsiveSankey
                 data={sankeyData}
-                margin={{ top: 10, right: 126, bottom: 10, left: 18 }}
-                align="justify"
-                colors={{ scheme: "paired" }}
+                margin={{ top: 32, right: 180, bottom: 32, left: 110 }}
+                align="start"
+                sort="input"
+                colors={{ scheme: "set2" }}
                 nodeOpacity={1}
-                nodeThickness={14}
-                nodeSpacing={18}
+                nodeThickness={36}
+                nodeSpacing={30}
                 nodeBorderWidth={0}
-                nodeBorderRadius={4}
-                linkOpacity={0.34}
-                linkHoverOpacity={0.62}
-                linkContract={3}
+                nodeBorderRadius={8}
+                linkOpacity={0.58}
+                linkHoverOpacity={0.86}
+                linkContract={0}
                 enableLinkGradient
+                label="label"
                 labelPosition="outside"
                 labelOrientation="horizontal"
-                labelPadding={10}
+                labelPadding={16}
                 labelTextColor="#334155"
+                theme={{
+                  labels: { text: { fontSize: 12, fontWeight: 800 } }
+                }}
                 valueFormat={(value) => currency(value)}
                 nodeTooltip={({ node }) => (
                   <div className="chart-tooltip">
-                    {node.id}: {currency(node.value)}
+                    {node.label}: {currency(node.value)}
                   </div>
                 )}
                 linkTooltip={({ link }) => (
                   <div className="chart-tooltip">
-                    {link.source.id} → {link.target.id}: {currency(link.value)}
+                    {link.source.label} → {link.target.label}: {currency(link.value)}
                   </div>
                 )}
               />
@@ -600,7 +623,7 @@ function TransactionRow({ txn, categoryOptions, contextOptions, onPatch }) {
   }
 
   return (
-    <div className="table-row">
+    <div className="txn-row">
       <span>{txn.date}</span>
       <div className="merchant-cell">
         <div className="txn-title-line">
@@ -888,8 +911,21 @@ function Budgets({ categories, summary, onBudget }) {
   );
 }
 
-function Income({ statements, summary, busy, onUpload, onDelete }) {
+const emptyManualIncome = {
+  employer: "",
+  payDate: today,
+  grossPay: "",
+  taxes: "",
+  retirement401k: "",
+  benefits: "",
+  takeHome: ""
+};
+
+function Income({ statements, summary, busy, onUpload, onManual, onGenerateRule, onPatch, onDelete }) {
   const breakdown = summary.incomeBreakdown || {};
+  const benefitsTotal = Number(breakdown.benefits || 0);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualForm, setManualForm] = useState(emptyManualIncome);
 
   function handleUpload(event) {
     const file = event.target.files?.[0];
@@ -897,43 +933,117 @@ function Income({ statements, summary, busy, onUpload, onDelete }) {
     event.target.value = "";
   }
 
+  async function handleManualSubmit(event) {
+    event.preventDefault();
+    await onManual(manualForm);
+    setManualForm(emptyManualIncome);
+    setManualOpen(false);
+  }
+
+  function updateManual(field, value) {
+    setManualForm((current) => ({ ...current, [field]: value }));
+  }
+
   return (
     <section className="wide-panel">
       <div className="income-header">
         <PanelTitle icon={<FileText size={18} />} title="Income statements" detail="Upload payroll PDFs to split gross pay into taxes, 401k, benefits, and take-home" />
-        <label className="primary-btn upload-btn">
-          <UploadCloud size={17} />
-          {busy ? "Parsing..." : "Upload PDF"}
-          <input type="file" accept="application/pdf,.pdf" onChange={handleUpload} disabled={busy} />
-        </label>
+        <div className="income-actions">
+          <button type="button" className="secondary-btn" onClick={() => setManualOpen((open) => !open)}>
+            <Plus size={16} />
+            Add manually
+          </button>
+          <button type="button" className="secondary-btn" onClick={onGenerateRule}>Generate Harvard weekly</button>
+          <label className="primary-btn upload-btn">
+            <UploadCloud size={17} />
+            {busy ? "Parsing..." : "Upload PDF"}
+            <input type="file" accept="application/pdf,.pdf" onChange={handleUpload} disabled={busy} />
+          </label>
+        </div>
       </div>
 
       <div className="income-metrics">
         <Metric title="Gross pay" value={currency(breakdown.grossPay)} detail={`${breakdown.count || 0} statements in range`} />
         <Metric title="Taxes" value={currency(breakdown.taxes)} detail="Withholding total" />
         <Metric title="401k" value={currency(breakdown.retirement401k)} detail="Retirement contributions" />
+        <Metric title="Benefits" value={currency(benefitsTotal)} detail="Medical, dental, HSA, insurance" tone={benefitsTotal > 0 ? "good" : ""} />
         <Metric title="Take-home" value={currency(breakdown.takeHome)} detail="Net pay received" tone="good" />
       </div>
+
+      {manualOpen && (
+        <form className="manual-income-form" onSubmit={handleManualSubmit}>
+          <label>
+            <span>Employer</span>
+            <input value={manualForm.employer} onChange={(event) => updateManual("employer", event.target.value)} placeholder="Employer" />
+          </label>
+          <label>
+            <span>Pay date</span>
+            <input type="date" value={manualForm.payDate} onChange={(event) => updateManual("payDate", event.target.value)} required />
+          </label>
+          <ManualMoneyField label="Gross" value={manualForm.grossPay} onChange={(value) => updateManual("grossPay", value)} />
+          <ManualMoneyField label="Taxes" value={manualForm.taxes} onChange={(value) => updateManual("taxes", value)} />
+          <ManualMoneyField label="401k" value={manualForm.retirement401k} onChange={(value) => updateManual("retirement401k", value)} />
+          <ManualMoneyField label="Benefits" value={manualForm.benefits} onChange={(value) => updateManual("benefits", value)} />
+          <ManualMoneyField label="Take-home" value={manualForm.takeHome} onChange={(value) => updateManual("takeHome", value)} />
+          <button type="submit" className="primary-btn" disabled={busy}>Add</button>
+        </form>
+      )}
 
       <div className="rules-list income-list">
         {statements.map((statement) => (
           <div className="rule-row income-row" key={statement.id}>
-            <div>
-              <strong>{statement.employer || statement.fileName}</strong>
-              <span>{statement.payDate || statement.periodEnd || "No pay date"} · Gross {currency(statement.grossPay)} · Net {currency(statement.takeHome)}</span>
-            </div>
-            <div className="rule-actions">
-              <span className="income-chip">Taxes {currency(statement.taxes)}</span>
-              <span className="income-chip">401k {currency(statement.retirement401k)}</span>
+            <div className="income-row-head">
+              <div>
+                <strong>{statement.employer || statement.fileName}</strong>
+                <span>{statement.payDate || statement.periodEnd || "No pay date"} · {statement.fileName}</span>
+              </div>
               <button type="button" className="icon-danger-btn" onClick={() => onDelete(statement.id)} aria-label={`Delete ${statement.fileName}`} title="Delete statement">
                 <Trash2 size={16} />
               </button>
+            </div>
+            <div className="income-edit-grid">
+              <IncomeAmountField label="Gross" value={statement.grossPay} onCommit={(value) => onPatch(statement.id, { grossPay: value })} />
+              <IncomeAmountField label="Taxes" value={statement.taxes} onCommit={(value) => onPatch(statement.id, { taxes: value })} />
+              <IncomeAmountField label="401k" value={statement.retirement401k} onCommit={(value) => onPatch(statement.id, { retirement401k: value })} />
+              <IncomeAmountField label="Benefits" value={statement.benefits} onCommit={(value) => onPatch(statement.id, { benefits: value })} />
+              <IncomeAmountField label="Take-home" value={statement.takeHome} onCommit={(value) => onPatch(statement.id, { takeHome: value })} />
             </div>
           </div>
         ))}
         {!statements.length && <Empty text="Upload a PDF pay statement to start tracking gross income, taxes, benefits, 401k, and take-home pay." />}
       </div>
     </section>
+  );
+}
+
+function ManualMoneyField({ label, value, onChange }) {
+  return (
+    <label>
+      <span>{label}</span>
+      <input type="number" step="0.01" min="0" value={value} onChange={(event) => onChange(event.target.value)} placeholder="0.00" />
+    </label>
+  );
+}
+
+function IncomeAmountField({ label, value, onCommit }) {
+  return (
+    <label className="income-edit-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        step="0.01"
+        min="0"
+        defaultValue={Number(value || 0).toFixed(2)}
+        onBlur={(event) => {
+          const next = Number(event.target.value || 0);
+          if (Number.isFinite(next) && Math.round(next * 100) / 100 !== Math.round(Number(value || 0) * 100) / 100) onCommit(next);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") event.currentTarget.value = Number(value || 0).toFixed(2);
+        }}
+      />
+    </label>
   );
 }
 
@@ -1201,36 +1311,34 @@ function makeSankeyData(transactions, summary, mode) {
 
   const income = summary.incomeBreakdown || {};
   if (income.grossPay > 0) {
+    const takeHome = income.takeHome || Math.max(income.grossPay - (income.taxes || 0) - (income.retirement401k || 0) - (income.benefits || 0), 0);
     const nodes = [
-      { id: "Gross pay" },
-      { id: "Taxes" },
-      { id: "401k" },
-      { id: "Benefits" },
-      { id: "Take-home" },
-      ...visible.map((row) => ({ id: row.name }))
+      { id: "node:gross-pay", label: "Gross pay" },
+      { id: "node:taxes", label: "Taxes" },
+      { id: "node:investments", label: "Investments" },
+      { id: "node:benefits", label: "Benefits" },
+      { id: "node:take-home", label: "Take-home" },
+      ...visible.map((row, index) => ({ id: `spend:${index}:${canonicalLabel(row.name)}`, label: row.name }))
     ];
     const links = [
-      { source: "Gross pay", target: "Taxes", value: income.taxes || 0 },
-      { source: "Gross pay", target: "401k", value: income.retirement401k || 0 },
-      { source: "Gross pay", target: "Benefits", value: income.benefits || 0 },
-      { source: "Gross pay", target: "Take-home", value: income.takeHome || Math.max(income.grossPay - (income.taxes || 0) - (income.retirement401k || 0) - (income.benefits || 0) - (income.otherDeductions || 0), 0) }
+      { source: "node:gross-pay", target: "node:taxes", value: income.taxes || 0 },
+      { source: "node:gross-pay", target: "node:investments", value: income.retirement401k || 0 },
+      { source: "node:gross-pay", target: "node:benefits", value: income.benefits || 0 },
+      { source: "node:gross-pay", target: "node:take-home", value: takeHome }
     ].filter((link) => link.value > 0);
-    for (const row of visible) links.push({ source: "Take-home", target: row.name, value: row.value });
-    const leftover = Math.round(Math.max((income.takeHome || 0) - (summary.totalSpend || 0), 0) * 100) / 100;
+    visible.forEach((row, index) => {
+      links.push({ source: "node:take-home", target: `spend:${index}:${canonicalLabel(row.name)}`, value: row.value });
+    });
+    const leftover = Math.round(Math.max(takeHome - (summary.totalSpend || 0), 0) * 100) / 100;
     if (leftover > 0) {
-      nodes.push({ id: "Left over" });
-      links.push({ source: "Take-home", target: "Left over", value: leftover });
+      nodes.push({ id: "spend:left-over", label: "Left over" });
+      links.push({ source: "node:take-home", target: "spend:left-over", value: leftover });
     }
     return { nodes, links };
   }
 
-  const nodes = [{ id: summary.totalIncome > 0 ? "Money in" : "Money out" }, ...visible.map((row) => ({ id: row.name }))];
+  const nodes = [{ id: "node:spending", label: "Spending" }, ...visible.map((row, index) => ({ id: `spend:${index}:${canonicalLabel(row.name)}`, label: row.name }))];
   const links = visible.map((row, index) => ({ source: nodes[0].id, target: nodes[index + 1].id, value: row.value }));
-  const leftover = Math.round(Math.max((summary.totalIncome || 0) - (summary.totalSpend || 0), 0) * 100) / 100;
-  if (leftover > 0) {
-    nodes.push({ id: "Left over" });
-    links.push({ source: nodes[0].id, target: "Left over", value: leftover });
-  }
 
   return { nodes, links };
 }
