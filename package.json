@@ -1,0 +1,37 @@
+{
+  "name": "personal-finance-command-center",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "node --watch server/index.js",
+    "client": "vite --host 127.0.0.1 --port 5175 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@nivo/sankey": "^0.99.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "cors": "^2.8.5",
+    "date-fns": "^4.1.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.1.1",
+    "openai": "^4.77.0",
+    "pdf-parse": "^2.4.5",
+    "plaid": "^28.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-plaid-link": "^3.6.1",
+    "recharts": "^2.15.0",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.0",
+    "tailwindcss": "^3.4.19"
+  }
+}
