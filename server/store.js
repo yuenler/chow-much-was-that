@@ -82,7 +82,10 @@ function normalizeTransactionShape(txn) {
   const legacySubcategory = txn.subcategory || "";
   const fixedLegacyCategory = fixedCategoryName(legacyCategory);
   const fixedLegacySubcategory = fixedCategoryName(legacySubcategory);
-  const context = canonicalLabel(txn.context) || legacyOverride || (!fixedLegacyCategory ? canonicalLabel(legacyCategory) : "");
+  const hasContextField = Object.prototype.hasOwnProperty.call(txn, "context");
+  const context = hasContextField
+    ? canonicalLabel(txn.context)
+    : legacyOverride || (!fixedLegacyCategory ? canonicalLabel(legacyCategory) : "");
   const category = fixedLegacySubcategory || fixedLegacyCategory || "Uncategorized";
   const { labelOverride, userCategory, subcategory, ...rest } = txn;
   return {

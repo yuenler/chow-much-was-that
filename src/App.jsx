@@ -156,6 +156,7 @@ export default function App() {
       await load();
     } catch (error) {
       setToast(error.message);
+      setStreamEvents((current) => appendAssistantError(current, error.message));
     } finally {
       setBusy("");
     }
@@ -234,7 +235,7 @@ export default function App() {
           setStreamEvents((current) => appendToolEvent(current, {
             kind: event.changed ? "edit" : "tool",
             label: event.changed ? "Edit" : "Tool",
-            content: event.summary || `${friendlyToolName(event.name)} finished.`
+            content: toolResultSummaryText(event.summary) || `${friendlyToolName(event.name)} finished.`
           }));
         } else if (event.type === "error") {
           throw new Error(event.message || "Assistant stream failed.");
@@ -665,7 +666,7 @@ function TransactionRow({ txn, categoryOptions, contextOptions, onPatch }) {
         ariaLabel="Context"
         onCommit={(nextLabel) => {
           const value = canonicalLabel(nextLabel);
-          if (value !== currentContextKey) onPatch(txn.id, { context: nextLabel });
+          if (value !== currentContextKey) onPatch(txn.id, { context: value });
         }}
       />
       <input
@@ -706,8 +707,8 @@ function LabelCombobox({ value, options, onCommit, onTextChange, formatter = dis
 
   function commit(nextValue = text) {
     const cleaned = nextValue.trim();
-    if (cleaned && canonicalLabel(cleaned) !== canonicalLabel(value)) onCommit(cleaned);
-    setText(formatter(cleaned || value));
+    if (canonicalLabel(cleaned) !== canonicalLabel(value)) onCommit(cleaned);
+    setText(cleaned ? formatter(cleaned) : "");
     setOpen(false);
   }
 
@@ -1158,7 +1159,7 @@ function ChatDrawer({ open, onClose, onNewChat, chat, input, setInput, onSend, b
         {chat.map((message) => (
           <div className={`chat-bubble ${message.role}${message.kind ? ` ${message.kind}` : ""}`} key={message.id}>
             {message.role === "tool" && <span className="tool-label">{message.label || "Tool"}</span>}
-            <span className="bubble-content">{message.content}</span>
+            <span className="bubble-content">{typeof message.content === "string" ? message.content : toolResultSummaryText(message.content)}</span>
           </div>
         ))}
       </div>
@@ -1193,6 +1194,15 @@ function appendAssistantDelta(messages, delta) {
   const index = next.findLastIndex((message) => message.role === "assistant");
   if (index === -1) return [...next, { id: `assistant-${Date.now()}`, role: "assistant", content: delta }];
   next[index] = { ...next[index], content: `${next[index].content || ""}${delta}` };
+  return next;
+}
+
+function appendAssistantError(messages, message) {
+  const text = `I hit an error while answering: ${message}`;
+  const next = [...messages];
+  const index = next.findLastIndex((item) => item.role === "assistant");
+  if (index === -1) return [...next, { id: `assistant-error-${Date.now()}`, role: "assistant", content: text }];
+  next[index] = { ...next[index], content: next[index].content?.trim() ? `${next[index].content}\n\n${text}` : text };
   return next;
 }
 
@@ -1233,6 +1243,14 @@ function formatToolCall(event) {
 
 function friendlyToolName(name = "") {
   return name.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function toolResultSummaryText(summary) {
+  if (typeof summary === "string") return summary;
+  if (summary && typeof summary === "object") {
+    return `Loaded summary for ${summary.period?.label || summary.month || "the selected period"}.`;
+  }
+  return "";
 }
 
 function shortId(id = "") {

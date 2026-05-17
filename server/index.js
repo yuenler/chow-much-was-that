@@ -568,9 +568,10 @@ app.post("/api/chat/stream", async (req, res) => {
       summary: summarizeFinance(publicState())
     });
   } catch (error) {
+    console.error("Chat stream failed:", cleanError(error));
     writeStreamEvent(res, "error", { message: cleanError(error) });
   } finally {
-    res.end();
+    if (!res.writableEnded) res.end();
   }
 });
 
@@ -837,7 +838,7 @@ async function runFinanceAgent(message, { onEvent, history = [] }) {
         type: "tool_result",
         name: call.name,
         changed: Boolean(result.changed),
-        summary: result.summary || summarizeToolResult(call.name, result),
+        summary: toolResultSummary(result, call.name),
         result: compactToolResult(result)
       });
       input.push({
@@ -998,15 +999,15 @@ function runFinanceAgentTool(name, args) {
   }
 
   if (name === "get_finance_summary") {
-    const summary = summarizeFinance(publicState(), {
+    const financeSummary = summarizeFinance(publicState(), {
       mode: args.mode,
       year: args.year,
       month: args.month,
       day: args.day
     });
     return {
-      summary,
-      summaryText: `Loaded summary for ${summary.period?.label || summary.month}.`
+      financeSummary,
+      summary: `Loaded summary for ${financeSummary.period?.label || financeSummary.month}.`
     };
   }
 
@@ -1114,27 +1115,38 @@ function compactToolResult(result) {
   if (Array.isArray(result.transactions)) {
     return { ...result, transactions: result.transactions.slice(0, 8) };
   }
-  if (result.summary?.byCategory) {
+  const financeSummary = result.financeSummary || (result.summary?.byCategory ? result.summary : null);
+  if (financeSummary?.byCategory) {
     return {
       ...result,
-      summary: {
-        ...result.summary,
-        byCategory: result.summary.byCategory.filter((item) => item.spent > 0).slice(0, 12)
+      financeSummary: {
+        ...financeSummary,
+        byCategory: financeSummary.byCategory.filter((item) => item.spent > 0).slice(0, 12)
       }
     };
   }
   return result;
 }
 
-function summarizeToolResult(name, result) {
-  if (result?.summary && typeof result.summary === "string") return result.summary;
+function toolResultSummary(result, name) {
+  if (typeof result?.summary === "string") return result.summary;
   if (result?.summaryText) return result.summaryText;
+  return summarizeToolResult(name, result);
+}
+
+function summarizeToolResult(name, result) {
   if (result?.error) return `${name} failed: ${result.error}`;
   return `${name} completed.`;
 }
 
 function writeStreamEvent(res, type, payload = {}) {
-  res.write(`${JSON.stringify({ type, ...payload })}\n`);
+  if (res.destroyed || res.writableEnded) return false;
+  try {
+    return res.write(`${JSON.stringify({ type, ...payload })}\n`);
+  } catch (error) {
+    console.error("Failed writing stream event:", cleanError(error));
+    return false;
+  }
 }
 
 function safeJson(text, fallback = {}) {
