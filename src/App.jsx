@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ResponsiveSankey } from "@nivo/sankey";
 import { usePlaidLink } from "react-plaid-link";
 import {
@@ -23,6 +24,7 @@ import {
   CreditCard,
   X,
   FileText,
+  EyeOff,
   Landmark,
   Link as LinkIcon,
   MessageSquareText,
@@ -582,7 +584,7 @@ function Transactions({ categoryOptions, contextOptions, transactions, search, s
 
       <div className="transaction-table">
         <div className="table-head">
-          <span>Date</span><span>Transaction</span><span>Category</span><span>Context</span><span>Note</span><span>Amount</span>
+          <span>Date</span><span>Transaction</span><span>Category</span><span>Context</span><span>Note</span><span>Amount</span><span>Actions</span>
         </div>
         {transactions.map((txn) => (
           <TransactionRow
@@ -603,6 +605,7 @@ function Transactions({ categoryOptions, contextOptions, transactions, search, s
 
 function TransactionRow({ txn, categoryOptions, contextOptions, onPatch }) {
   const [editingName, setEditingName] = useState(false);
+  const [confirmIgnore, setConfirmIgnore] = useState(false);
   const currentCategory = txn.category || "Uncategorized";
   const currentCategoryKey = canonicalLabel(currentCategory);
   const currentContext = txn.context || "";
@@ -684,7 +687,48 @@ function TransactionRow({ txn, categoryOptions, contextOptions, onPatch }) {
         aria-label="Note"
       />
       <b className={txn.amount < 0 ? "income" : ""}>{currency(txn.amount)}</b>
+      <button
+        type="button"
+        className="icon-muted-btn"
+        onClick={() => setConfirmIgnore(true)}
+        aria-label={`Ignore ${transactionDisplayName(txn)}`}
+        title="Ignore this transaction"
+      >
+        <EyeOff size={15} />
+      </button>
+      {confirmIgnore && (
+        <ConfirmModal
+          title="Hide transaction?"
+          message="Are you sure you want to hide this transaction from everything?"
+          detail={`${transactionDisplayName(txn)} · ${txn.date} · ${currency(txn.amount)}`}
+          confirmLabel="Hide transaction"
+          onCancel={() => setConfirmIgnore(false)}
+          onConfirm={() => {
+            setConfirmIgnore(false);
+            onPatch(txn.id, { hidden: true });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function ConfirmModal({ title, message, detail, confirmLabel, onCancel, onConfirm }) {
+  return createPortal(
+    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+      <div className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div>
+          <strong id="confirm-title">{title}</strong>
+          <p>{message}</p>
+          {detail && <span>{detail}</span>}
+        </div>
+        <div className="confirm-actions">
+          <button type="button" className="secondary-btn" onClick={onCancel}>Cancel</button>
+          <button type="button" className="danger-btn" onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

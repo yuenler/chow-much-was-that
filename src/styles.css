@@ -443,7 +443,7 @@
 
   .table-head,
   .txn-row {
-    @apply grid grid-cols-[88px_minmax(260px,1.35fr)_minmax(132px,170px)_minmax(150px,190px)_minmax(150px,1fr)_92px] gap-2;
+    @apply grid grid-cols-[88px_minmax(260px,1.35fr)_minmax(132px,170px)_minmax(150px,190px)_minmax(150px,1fr)_92px_64px] gap-2;
   }
 
   .table-head {
@@ -460,6 +460,10 @@
 
   .txn-row > b {
     @apply text-right text-sm font-black text-slate-950;
+  }
+
+  .txn-row > .icon-muted-btn {
+    @apply justify-self-end;
   }
 
   .merchant-cell {
@@ -493,6 +497,44 @@
 
   .icon-mini-btn {
     @apply grid h-5 w-5 shrink-0 place-items-center rounded-md border border-transparent text-slate-400 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900;
+  }
+
+  .icon-muted-btn {
+    @apply grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600;
+  }
+
+  .modal-backdrop {
+    @apply fixed inset-0 z-[80] grid place-items-center bg-slate-950/30 p-4 backdrop-blur-sm;
+  }
+
+  .confirm-modal {
+    @apply grid w-[min(420px,100%)] gap-5 rounded-lg border border-slate-200 bg-white p-5 shadow-2xl shadow-slate-950/20;
+  }
+
+  .confirm-modal strong,
+  .confirm-modal p,
+  .confirm-modal span {
+    @apply block;
+  }
+
+  .confirm-modal strong {
+    @apply text-lg font-black text-slate-950;
+  }
+
+  .confirm-modal p {
+    @apply mt-1 text-sm font-semibold text-slate-700;
+  }
+
+  .confirm-modal span {
+    @apply mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-extrabold text-slate-500;
+  }
+
+  .confirm-actions {
+    @apply flex justify-end gap-2;
+  }
+
+  .danger-btn {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-rose-600 bg-rose-600 px-4 text-sm font-extrabold text-white shadow-sm transition hover:border-rose-700 hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .txn-fields {
@@ -894,7 +936,7 @@
   }
 
   .txn-row {
-    @apply grid-cols-[82px_minmax(0,1fr)_auto];
+    @apply grid-cols-[82px_minmax(0,1fr)_auto_auto];
   }
 
   .txn-row > .txn-select,
@@ -905,6 +947,10 @@
 
   .txn-row b {
     @apply col-start-3 row-start-1 self-start;
+  }
+
+  .txn-row > .icon-muted-btn {
+    @apply col-start-4 row-start-1 self-start;
   }
 
   .chat-panel {
