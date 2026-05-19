@@ -78,6 +78,7 @@ app.patch("/api/config/model", (req, res) => {
 });
 
 app.get("/api/state", (req, res) => {
+  applyDuplicateTransactionIgnores();
   const state = publicState();
   const range = {
     mode: req.query.mode,
@@ -1020,6 +1021,76 @@ function runFinanceAgentTool(name, args) {
   }
 
   return { error: `Unknown tool: ${name}` };
+}
+
+function applyDuplicateTransactionIgnores() {
+  const state = readState();
+  const groups = findDuplicateTransactionGroups(state);
+  const duplicateIds = Array.from(new Set(groups.flatMap((group) => group.hide.map((txn) => txn.id))));
+  if (!duplicateIds.length) return { hiddenCount: 0, groupCount: 0 };
+
+  const duplicateIdSet = new Set(duplicateIds);
+  const mergedKeepValues = new Map();
+  for (const group of groups) {
+    if (group.keep) mergedKeepValues.set(group.keep.id, mergeDuplicateValues(group.keep, group.hide));
+  }
+
+  updateState((current) => ({
+    ...current,
+    transactions: current.transactions.map((txn) =>
+      duplicateIdSet.has(txn.id)
+        ? { ...txn, hidden: true, reviewed: true }
+        : mergedKeepValues.has(txn.id)
+          ? { ...txn, ...mergedKeepValues.get(txn.id) }
+          : txn
+    )
+  }));
+
+  return { hiddenCount: duplicateIds.length, groupCount: groups.length };
+}
+
+function mergeDuplicateValues(keep, hiddenRows) {
+  return hiddenRows.reduce((next, hidden) => {
+    const hiddenCategory = String(hidden.category || "");
+    if ((!next.category || next.category === "Uncategorized") && hiddenCategory && hiddenCategory !== "Uncategorized") {
+      next.category = hiddenCategory;
+    }
+    if (!next.context && hidden.context) next.context = hidden.context;
+    if (!next.notes && hidden.notes) next.notes = hidden.notes;
+    if (!next.displayName && hidden.displayName) next.displayName = hidden.displayName;
+    if (!next.reviewed && hidden.reviewed) next.reviewed = true;
+    return next;
+  }, { ...keep });
+}
+
+function findDuplicateTransactionGroups(state) {
+  const grouped = new Map();
+  for (const txn of state.transactions || []) {
+    if (txn.hidden) continue;
+    const key = duplicateExactKey(txn);
+    if (!key) continue;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(txn);
+  }
+
+  return Array.from(grouped.values())
+    .filter((group) => group.length > 1 && group.some(isCsvTransaction) && group.some((txn) => !isCsvTransaction(txn)))
+    .map((group) => {
+      const csvRows = group.filter(isCsvTransaction);
+      const plaidRows = group.filter((txn) => !isCsvTransaction(txn));
+      return { keep: plaidRows.length === 1 ? plaidRows[0] : null, hide: csvRows };
+    })
+    .filter((group) => group.hide.length > 0)
+    .sort((a, b) => String(b.hide[0]?.date || "").localeCompare(String(a.hide[0]?.date || "")));
+}
+
+function duplicateExactKey(txn) {
+  const amount = Math.round(Number(txn.amount || 0) * 100);
+  return [txn.accountId || "", txn.date || "", amount].join("|");
+}
+
+function isCsvTransaction(txn) {
+  return String(txn.id || "").startsWith("csv_") || Boolean(txn.raw?.sourceFile || txn.raw?.sourceKind);
 }
 
 function applyTransactionPatch(state, txn, patch) {

@@ -359,10 +359,32 @@ function summarizeIncomeStatements(statements) {
     takeHome: sum.takeHome + Number(statement.takeHome || 0)
   }), { grossPay: 0, taxes: 0, retirement401k: 0, benefits: 0, takeHome: 0 });
 
+  const sources = Array.from(
+    statements.reduce((groups, statement) => {
+      const name = incomeSourceName(statement);
+      const current = groups.get(name) || { name, grossPay: 0, count: 0 };
+      current.grossPay += Number(statement.grossPay || 0);
+      current.count += 1;
+      groups.set(name, current);
+      return groups;
+    }, new Map()).values()
+  )
+    .map((source) => ({ ...source, grossPay: round(source.grossPay) }))
+    .filter((source) => source.grossPay > 0)
+    .sort((a, b) => b.grossPay - a.grossPay);
+
   return {
     ...Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, round(value)])),
-    count: statements.length
+    count: statements.length,
+    sources
   };
+}
+
+function incomeSourceName(statement) {
+  const label = String(statement.employer || statement.fileName || "Income").trim();
+  if (/amazon/i.test(label)) return "Amazon";
+  if (/harvard/i.test(label)) return "Edtech";
+  return label || "Income";
 }
 
 function normalizeRange(range) {

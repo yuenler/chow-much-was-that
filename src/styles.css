@@ -418,7 +418,7 @@
   }
 
   .toolbar {
-    @apply mb-4 grid grid-cols-[minmax(220px,1fr)_190px_auto] gap-2.5;
+    @apply mb-4 grid grid-cols-[minmax(220px,1fr)_190px_190px] gap-2.5;
   }
 
   .txn-detected {
@@ -526,7 +526,7 @@
   }
 
   .confirm-modal span {
-    @apply mt-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-extrabold text-slate-500;
+    @apply mt-3 whitespace-pre-line rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs font-extrabold text-slate-500;
   }
 
   .confirm-actions {

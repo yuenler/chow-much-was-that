@@ -114,6 +114,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("Overview");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [transactionSort, setTransactionSort] = useState("date-desc");
   const [dateRange, setDateRange] = useState(defaultRange);
   const [chatInput, setChatInput] = useState("");
   const [streamEvents, setStreamEvents] = useState([]);
@@ -138,17 +139,16 @@ export default function App() {
   const dateOptions = useMemo(() => makeDateOptions(state?.transactions || [], dateRange), [state, dateRange]);
   const filteredTransactions = useMemo(() => {
     const query = search.toLowerCase();
-    return (state?.transactions || [])
-      .filter((txn) => {
+    const rows = (state?.transactions || []).filter((txn) => {
         const label = `${txn.displayName || ""} ${txn.merchantName || ""} ${txn.name || ""} ${txn.notes || ""} ${txn.category || ""} ${txn.context || ""}`.toLowerCase();
         if (txn.hidden) return false;
         if (!inDateRange(txn.date, dateRange)) return false;
         if (query && !label.includes(query)) return false;
         if (categoryFilter !== "All" && canonicalLabel(txn.category) !== canonicalLabel(categoryFilter)) return false;
         return true;
-      })
-      .slice(0, 120);
-  }, [state, search, categoryFilter, dateRange]);
+      });
+    return sortTransactions(rows, transactionSort).slice(0, 120);
+  }, [state, search, categoryFilter, transactionSort, dateRange]);
 
   async function runAction(label, fn) {
     setBusy(label);
@@ -353,9 +353,9 @@ export default function App() {
             setSearch={setSearch}
             categoryFilter={categoryFilter}
             setCategoryFilter={setCategoryFilter}
+            transactionSort={transactionSort}
+            setTransactionSort={setTransactionSort}
             onPatch={patchTransaction}
-            onAICategorize={() => runAction("categorize", () => api("/api/ai/categorize", { method: "POST" }))}
-            busy={busy}
           />
         )}
         {activeTab === "Income" && (
@@ -564,7 +564,18 @@ function Overview({ state }) {
   );
 }
 
-function Transactions({ categoryOptions, contextOptions, transactions, search, setSearch, categoryFilter, setCategoryFilter, onPatch, onAICategorize, busy }) {
+function Transactions({
+  categoryOptions,
+  contextOptions,
+  transactions,
+  search,
+  setSearch,
+  categoryFilter,
+  setCategoryFilter,
+  transactionSort,
+  setTransactionSort,
+  onPatch
+}) {
   return (
     <section className="wide-panel">
       <div className="toolbar">
@@ -576,10 +587,14 @@ function Transactions({ categoryOptions, contextOptions, transactions, search, s
           <option>All</option>
           {categoryOptions.map((label) => <option key={label}>{displayLabel(label)}</option>)}
         </select>
-        <button className="secondary-btn" onClick={onAICategorize} disabled={busy === "categorize"}>
-          <Sparkles size={17} />
-          AI categorize
-        </button>
+        <select value={transactionSort} onChange={(event) => setTransactionSort(event.target.value)} aria-label="Sort transactions">
+          <option value="date-desc">Newest first</option>
+          <option value="date-asc">Oldest first</option>
+          <option value="amount-desc">Amount high to low</option>
+          <option value="amount-asc">Amount low to high</option>
+          <option value="merchant-asc">Merchant A to Z</option>
+          <option value="category-asc">Category A to Z</option>
+        </select>
       </div>
 
       <div className="transaction-table">
@@ -1392,6 +1407,14 @@ function makeSankeyData(transactions, summary, mode) {
     const takeHome = income.takeHome || Math.max(income.grossPay - (income.taxes || 0) - (income.retirement401k || 0) - (income.benefits || 0), 0);
     const nodes = [{ id: "node:gross-pay", label: "Gross pay" }];
     const links = [];
+    const incomeSources = (income.sources?.length ? income.sources : [{ name: "Income", grossPay: income.grossPay }])
+      .filter((source) => Number(source.grossPay || 0) > 0);
+
+    incomeSources.forEach((source, index) => {
+      const id = `source:${index}:${canonicalLabel(source.name)}`;
+      nodes.push({ id, label: source.name });
+      links.push({ source: id, target: "node:gross-pay", value: Number(source.grossPay || 0) });
+    });
 
     if ((income.taxes || 0) > 0) {
       nodes.push({ id: "node:taxes", label: "Taxes" });
@@ -1486,6 +1509,23 @@ function transactionLabel(txn) {
 
 function transactionDisplayName(txn) {
   return txn.displayName || txn.merchantName || txn.name || "Unknown";
+}
+
+function sortTransactions(transactions, sort) {
+  const rows = [...transactions];
+  const merchantName = (txn) => transactionDisplayName(txn).toLowerCase();
+  const amount = (txn) => Math.abs(Number(txn.amount || 0));
+  const dateDesc = (a, b) => String(b.date || "").localeCompare(String(a.date || ""));
+  const dateAsc = (a, b) => String(a.date || "").localeCompare(String(b.date || ""));
+
+  return rows.sort((a, b) => {
+    if (sort === "date-asc") return dateAsc(a, b) || merchantName(a).localeCompare(merchantName(b));
+    if (sort === "amount-desc") return amount(b) - amount(a) || dateDesc(a, b);
+    if (sort === "amount-asc") return amount(a) - amount(b) || dateDesc(a, b);
+    if (sort === "merchant-asc") return merchantName(a).localeCompare(merchantName(b)) || dateDesc(a, b);
+    if (sort === "category-asc") return displayLabel(a.category).localeCompare(displayLabel(b.category)) || dateDesc(a, b);
+    return dateDesc(a, b) || merchantName(a).localeCompare(merchantName(b));
+  });
 }
 
 function ruleDescription(rule) {
