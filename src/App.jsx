@@ -43,7 +43,7 @@ import { api, currency, percent } from "./lib/api.js";
 
 const tabs = ["Overview", "Transactions", "Income", "Budgets", "Rules"];
 const today = new Date().toISOString().slice(0, 10);
-const defaultRange = { mode: "month", year: today.slice(0, 4), month: today.slice(0, 7), day: today };
+const defaultRange = rollingRange("past-month");
 
 function PlaidButton({ disabled, onConnected, onError }) {
   const [token, setToken] = useState(null);
@@ -864,22 +864,7 @@ function DateRangeSelector({ range, setRange, options }) {
   }
 
   function setPreset(preset) {
-    if (preset === "this-month") {
-      setRange((current) => ({ ...current, mode: "month", preset: "", start: "", end: "", year: today.slice(0, 4), month: today.slice(0, 7), day: today }));
-      return;
-    }
-    const months = preset === "past-year" ? 12 : 3;
-    const start = firstDayMonthsAgo(months - 1);
-    setRange((current) => ({
-      ...current,
-      mode: "custom",
-      preset,
-      start,
-      end: today,
-      year: today.slice(0, 4),
-      month: today.slice(0, 7),
-      day: today
-    }));
+    setRange((current) => ({ ...current, ...rollingRange(preset) }));
   }
 
   return (
@@ -912,7 +897,7 @@ function DateRangeSelector({ range, setRange, options }) {
           )}
         </div>
         <div className="range-presets">
-          <button type="button" className={range.mode === "month" && range.month === today.slice(0, 7) ? "active" : ""} onClick={() => setPreset("this-month")}>This month</button>
+          <button type="button" className={range.preset === "past-month" ? "active" : ""} onClick={() => setPreset("past-month")}>Past month</button>
           <button type="button" className={range.preset === "past-3-months" ? "active" : ""} onClick={() => setPreset("past-3-months")}>Past 3 months</button>
           <button type="button" className={range.preset === "past-year" ? "active" : ""} onClick={() => setPreset("past-year")}>Past year</button>
         </div>
@@ -1584,9 +1569,32 @@ function rangeBounds(range) {
   return { start, end };
 }
 
-function firstDayMonthsAgo(monthsAgo) {
+function rollingRange(preset) {
+  const months = preset === "past-year" ? 12 : preset === "past-3-months" ? 3 : 1;
+  return {
+    mode: "custom",
+    preset,
+    start: dateMonthsAgo(months),
+    end: today,
+    year: today.slice(0, 4),
+    month: today.slice(0, 7),
+    day: today
+  };
+}
+
+function dateMonthsAgo(monthsAgo) {
   const current = new Date(`${today}T12:00:00`);
-  return new Date(current.getFullYear(), current.getMonth() - monthsAgo, 1).toISOString().slice(0, 10);
+  const target = new Date(current.getFullYear(), current.getMonth() - monthsAgo, 1, 12);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  const day = Math.min(current.getDate(), lastDay);
+  return localDateString(new Date(target.getFullYear(), target.getMonth(), day, 12));
+}
+
+function localDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatMonth(value) {
